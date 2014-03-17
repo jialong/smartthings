@@ -1,0 +1,147 @@
+metadata {
+	simulator {
+		// messages the device returns in response to commands it receives
+		status "motion (basic)"     : "command: 2001, payload: FF"
+		status "no motion (basic)"  : "command: 2001, payload: 00"
+		status "motion (binary)"    : "command: 3003, payload: FF"
+		status "no motion (binary)" : "command: 3003, payload: 00"
+
+		for (int i = 0; i <= 100; i += 20) {
+			status "battery ${i}%": new physicalgraph.zwave.Zwave().batteryV1.batteryReport(
+				batteryLevel: i).incomingMessage()
+		}
+	}
+
+	tiles {
+		standardTile("motion", "device.motion", width: 2, height: 2) {
+			state "active", label:'motion', icon:"st.motion.motion.active", backgroundColor:"#53a7c0"
+			state "inactive", label:'no motion', icon:"st.motion.motion.inactive", backgroundColor:"#ffffff"
+		}
+		valueTile("battery", "device.battery", inactiveLabel: false, decoration: "flat") {
+			state "battery", label:'${currentValue}% battery', unit:""
+		}
+		standardTile("configure", "device.configure", inactiveLabel: false, decoration: "flat") {
+			state "configure", label:'', action:"configuration.configure", icon:"st.secondary.configure"
+		}
+
+		main(["motion"])
+		details(["motion", "battery", "configure"])
+	}
+}
+
+// Parse incoming device messages to generate events
+def parse(String description)
+{
+	// 0x30 0x86 0x72 0x85 0x71 0x84 0x80 0x70 0x20
+    // 0x30 sensor binary
+    // 0x86 version
+    // 0x72 manuf
+    // 0x85 association
+    // 0x71 alarm
+    // 0x84 wake up
+    // 0x80 battery
+    // 0x70 configuration
+    // 0x20 basic
+	def result = []
+	def cmd = zwave.parse(description, [0x80: 1, 0x30: 1, 0x84: 2, 0x70:1, 0x20:1, 0x85:2])
+	if (cmd) {
+		// if( cmd.CMD == "8407" ) { result << new physicalgraph.device.HubAction(zwave.wakeUpV2.wakeUpNoMoreInformation().format()) }
+        if ( cmd.CMD == "8407" ) {
+        	result = zwaveEvent(cmd)
+        }
+        else {
+			result << createEvent(zwaveEvent(cmd))
+        }
+	}
+	log.debug "Parse returned ${result}"
+	return result
+}
+
+// Event Generation
+def zwaveEvent(physicalgraph.zwave.commands.wakeupv2.WakeUpNotification cmd)
+{
+	def map = [:]
+    map.descriptionText = "${device.displayName} woke up"
+    map.isStateChange = false
+    
+    def results = [createEvent(map)]
+    results << response(zwave.batteryV1.batteryGet())
+    results << response("delay 1200")
+    results << response(zwave.wakeUpV2.wakeUpNoMoreInformation())
+    
+    results
+}
+
+def zwaveEvent(physicalgraph.zwave.commands.batteryv1.BatteryReport cmd) {
+	def map = [:]
+	map.name = "battery"
+	map.value = cmd.batteryLevel > 0 ? cmd.batteryLevel.toString() : 1
+	map.unit = "%"
+	map.displayed = false
+    
+	map
+}
+
+def zwaveEvent(physicalgraph.zwave.commands.sensorbinaryv1.SensorBinaryReport cmd) {
+	def map = [:]
+	map.value = cmd.sensorValue ? "active" : "inactive"
+	map.name = "motion"
+	if (map.value == "active") {
+		map.descriptionText = "$device.displayName detected motion"
+	}
+	else {
+		map.descriptionText = "$device.displayName motion has stopped"
+	}
+	map
+}
+
+def zwaveEvent(physicalgraph.zwave.commands.basicv1.BasicSet cmd) {
+	def map = [:]
+	map.value = cmd.value ? "active" : "inactive"
+	map.name = "motion"
+	if (map.value == "active") {
+		map.descriptionText = "$device.displayName detected motion"
+	}
+	else {
+		map.descriptionText = "$device.displayName motion has stopped"
+	}
+	map
+}
+
+def zwaveEvent(physicalgraph.zwave.commands.configurationv1.ConfigurationReport cmd) {
+	log.debug("Configuration report: Parameter number ${cmd.parameterNumber}, Configuration Value: ${cmd.configurationValue}")
+}
+
+def zwaveEvent(physicalgraph.zwave.Command cmd) {
+	log.debug "Catchall reached for cmd: ${cmd.toString()}}"
+	[:]
+}
+
+def configure() {
+	log.debug "Configuring device..."
+    
+    def cmds = []
+    
+    // sensitivity
+    cmds << zwave.configurationV1.configurationSet(parameterNumber: 3, configurationValue: [8]).format()
+    // re-trigger interval
+    cmds << zwave.configurationV1.configurationSet(parameterNumber: 4, size: 1, scaledConfigurationValue: 120).format()
+    // on-off duration
+    cmds << zwave.configurationV1.configurationSet(parameterNumber: 6, size: 1, scaledConfigurationValue: 120).format()
+    
+	delayBetween(
+    	cmds,
+        1000
+	)
+}
+
+def test() {
+	def cmds = []
+    cmds << zwave.configurationV1.configurationGet(parameterNumber: 6).format()
+    cmds << zwave.configurationV1.configurationGet(parameterNumber: 3).format()
+    cmds << zwave.configurationV1.configurationGet(parameterNumber: 4).format()
+    
+    log.debug "Sending ${cmds.inspect()}"
+    
+    delayBetween(cmds, 1000)
+}
