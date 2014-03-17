@@ -1,3 +1,6 @@
+/**
+ *  Everspring HSP02 Motion Sensor
+ */
 metadata {
 	simulator {
 		// messages the device returns in response to commands it receives
